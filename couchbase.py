@@ -12,7 +12,6 @@ import metric_info
 DEFAULT_API_TIMEOUT = 60  # Seconds to wait for the Couchbase API to respond
 DEFAULT_FIELD_LENGTH = 63  # From the collectd "Naming schema" doc
 DEFAULT_METRIC_TYPE = 'gauge'
-DIMENSION_NAMES = frozenset(('hostHasService', 'cluster', 'bucket', 'host'))
 PLUGIN_NAME = 'couchbase'
 DEFAULT_INTERVAL = 10  # Default interval
 DEFAULT_COLLECT_MODE = 'default'
@@ -20,10 +19,10 @@ DETAILED_COLLECT_MODE = 'detailed'
 TARGET_NODE = 'NODE'
 TARGET_BUCKET = 'BUCKET'
 CLUSTER_DEFAULT = 'default'
-REQUEST_TYPE_NODE = "node"
-REQUEST_TYPE_NODE_STAT = "node_stat"
-REQUEST_TYPE_BUCKET = "bucket"
-REQUEST_TYPE_BUCKET_STAT = "bucket_stat"
+REQUEST_TYPE_NODE = 'node'
+REQUEST_TYPE_NODE_STAT = 'node_stat'
+REQUEST_TYPE_BUCKET = 'bucket'
+REQUEST_TYPE_BUCKET_STAT = 'bucket_stat'
 
 # These are determined by the plugin config settings and are set by config()
 http_timeout = DEFAULT_API_TIMEOUT
@@ -31,17 +30,12 @@ http_timeout = DEFAULT_API_TIMEOUT
 
 class Metric:
 
-    def __init__(self, name, value, dimensions=None):
+    def __init__(self, name, value):
         self.name = name
         self.value = value
-        if dimensions is None:
-            self.dimensions = {}
-        else:
-            self.dimensions = dimensions
 
     def __str__(self):
-        return "Metric { name: %s, value: %s, dimensions: %s}" % (
-            self.name, self.value, self.dimensions)
+        return "Metric { name: %s, value: %s }" % (self.name, self.value)
 
 
 def _api_call(url, opener):
@@ -80,7 +74,6 @@ def config(config_values, testing="no"):
     username = None
     password = None
     api_urls = {}
-    field_length = DEFAULT_FIELD_LENGTH
     cluster_name = CLUSTER_DEFAULT
 
     required_keys = ('CollectTarget', 'Host', 'Port')
@@ -106,8 +99,6 @@ def config(config_values, testing="no"):
         elif val.key in bucket_specific_keys and val.key == 'Password' and \
                 val.values[0]:
             password = val.values[0]
-        elif val.key == 'FieldLength' and val.values[0]:
-            field_length = int(val.values[0])
         elif val.key in opt_keys and val.key == 'ClusterName'\
                 and val.values[0]:
             cluster_name = val.values[0]
@@ -132,13 +123,13 @@ def config(config_values, testing="no"):
         raise ValueError('Invalid CollectTarget parameter')
 
     # Populate the API URLs now that we have the config
-    base_url = ("http://%s:%s" %
-                (plugin_config['Host'], plugin_config['Port']))
+    base_url = ("http://%s:%s" % (plugin_config['Host'],
+                                  plugin_config['Port']))
 
     auth = urllib2.HTTPPasswordMgrWithDefaultRealm()
     if username is None and password is None:
         username = password = ''
-    collectd.info("Using username '%s' and password '%s' " % (
+    collectd.debug("Using username '%s' and password '%s' " % (
         username, password))
     auth.add_password(None,
                       user=username,
@@ -160,16 +151,9 @@ def config(config_values, testing="no"):
         'username': username,
         'password': password,
         'opener': opener,
-        'field_length': field_length,
         'base_url': base_url,
         'cluster_name': cluster_name
     }
-
-    # Prepare dimensions list
-    module_config['dimensions'] = _build_dimensions(module_config)
-
-    collectd.debug("Using dimensions:")
-    collectd.debug(pprint.pformat(module_config['dimensions']))
 
     if testing == "yes":
         # for testing purposes
@@ -189,16 +173,7 @@ def config(config_values, testing="no"):
                                     plugin_config['Port'])
 
 
-def _build_dimensions(module_config):
-    collect_target = module_config['plugin_config'].get('CollectTarget')
-    cluster_name = module_config['cluster_name']
-    dimensions = {'hostHasService': 'couchbase', 'cluster': cluster_name}
-    if collect_target == TARGET_BUCKET:
-        dimensions['bucket'] = module_config['collect_bucket']
-    return dimensions
-
-
-def _parse_with_prefix(metric_name_pref, obj, dimensions, module_config):
+def _parse_with_prefix(metric_name_pref, obj, module_config):
     metrics = []
     for key, value in obj.iteritems():
         if isinstance(value, dict):
@@ -209,11 +184,10 @@ def _parse_with_prefix(metric_name_pref, obj, dimensions, module_config):
                 pass
             else:
                 new_metric_pref += '.' + key
-            metrics.extend(
-                _parse_with_prefix(new_metric_pref, value, dimensions,
-                                   module_config))
+            metrics.extend(_parse_with_prefix(new_metric_pref, value,
+                           module_config))
         else:
-            metric = _process_metric(metric_name_pref, key, value, dimensions,
+            metric = _process_metric(metric_name_pref, key, value,
                                      module_config)
             if metric:
                 metrics.append(metric)
@@ -228,47 +202,40 @@ def _is_metric_name_allowed(metric_name, module_config):
     return False
 
 
-def _process_metric(metric_name_pref, metric_name, value, dimensions,
-                    module_config):
+def _process_metric(metric_name_pref, metric_name, value, module_config):
     metric_name = metric_name_pref + "." + metric_name
     if _is_metric_name_allowed(metric_name, module_config):
-        return Metric(metric_name, value, dimensions)
+        return Metric(metric_name, value)
     return None
 
 
-def _parse_metrics(obj_to_parse, dimensions, request_type, module_config):
+def _parse_metrics(obj_to_parse, request_type, module_config):
     metrics = []
     if request_type == REQUEST_TYPE_NODE:
         if 'storageTotals' in obj_to_parse:
             value = obj_to_parse['storageTotals']
             metric_name_pref = 'storage'
-            metrics.extend(
-                _parse_with_prefix(metric_name_pref, value, dimensions,
-                                   module_config))
+            metrics.extend(_parse_with_prefix(metric_name_pref, value,
+                           module_config))
     elif request_type == REQUEST_TYPE_NODE_STAT:
         if 'nodes' in obj_to_parse:
             value = obj_to_parse['nodes']
             metric_name_pref = 'nodes'
             for node in value:
                 if 'thisNode' in node and node['thisNode'] is True:
-                    dimensions = dict(dimensions)
-                    dimensions['node'] = node.get('hostname')
                     metrics.extend(_parse_with_prefix(metric_name_pref, node,
-                                                      dimensions,
                                                       module_config))
     elif request_type == REQUEST_TYPE_BUCKET:
         if 'quota' in obj_to_parse:
             value = obj_to_parse['quota']
             metric_name_pref = 'bucket.quota'
-            metrics.extend(
-                _parse_with_prefix(metric_name_pref, value, dimensions,
-                                   module_config))
+            metrics.extend(_parse_with_prefix(metric_name_pref, value,
+                           module_config))
         if 'basicStats' in obj_to_parse:
             value = obj_to_parse['basicStats']
             metric_name_pref = 'bucket.basic'
-            metrics.extend(
-                _parse_with_prefix(metric_name_pref, value, dimensions,
-                                   module_config))
+            metrics.extend(_parse_with_prefix(metric_name_pref, value,
+                           module_config))
     elif request_type == REQUEST_TYPE_BUCKET_STAT:
         if 'op' in obj_to_parse:
             value = obj_to_parse['op']
@@ -278,8 +245,7 @@ def _parse_metrics(obj_to_parse, dimensions, request_type, module_config):
                 if isinstance(value_sample, list):
                     metric_value = value_sample[-1]
                     metric = _process_metric(metric_name_pref, key_sample,
-                                             metric_value, dimensions,
-                                             module_config)
+                                             metric_value, module_config)
                     if metric:
                         metrics.append(metric)
 
@@ -287,34 +253,6 @@ def _parse_metrics(obj_to_parse, dimensions, request_type, module_config):
     for metric in metrics:
         collectd.debug(str(metric))
     return metrics
-
-
-def _format_dimensions(dimensions, field_length=DEFAULT_FIELD_LENGTH):
-    """
-    Formats a dictionary of dimensions to a format that enables them to be
-    specified as key, value pairs in plugin_instance to signalfx. E.g.
-    dimensions = {'a': 'foo', 'b': 'bar'}
-    _format_dimensions(dimensions)
-    "[a=foo,b=bar]"
-    Args:
-    dimensions (dict): Mapping of {dimension_name: value, ...}
-    Returns:
-    str: Comma-separated list of dimensions
-    """
-    # Collectd limits the plugin_instance field size, so truncate anything
-    # longer than that.
-    trunc_len = field_length - 2  # account for the 2 brackets at either end
-    dim_pairs = []
-    # Put the bucket and node dimensions first because it is more likely
-    # to be unique and we don't want it to get truncated.
-    if 'node' in dimensions:
-        dim_pairs.append('node=%s' % dimensions['node'])
-    if 'bucket' in dimensions:
-        dim_pairs.append('bucket=%s' % dimensions['bucket'])
-    dim_pairs.extend("%s=%s" % (k, v) for k, v in dimensions.iteritems() if
-                     k != 'node' and k != 'bucket')
-    dim_str = ",".join(dim_pairs)[:trunc_len]
-    return "[%s]" % dim_str
 
 
 def _post_metrics(metrics, module_config):
@@ -328,10 +266,12 @@ def _post_metrics(metrics, module_config):
         datapoint.type = DEFAULT_METRIC_TYPE
         datapoint.type_instance = metric.name
         datapoint.plugin = PLUGIN_NAME
-        datapoint.plugin_instance = _format_dimensions(metric.dimensions,
-                                                       module_config[
-                                                           'field_length'])
+        if module_config['collect_bucket']:
+            datapoint.plugin_instance = module_config['collect_bucket']
+        else:
+            datapoint.plugin_instance = module_config['cluster_name']
         datapoint.values = (metric.value,)
+
         pprint_dict = {
             'plugin': datapoint.plugin,
             'plugin_instance': datapoint.plugin_instance,
@@ -431,20 +371,14 @@ def read_bucket_stats(module_config):
             if resp_obj is None:
                 collectd.error('Unable to get per-node bucket stats from ' +
                                api_url)
-            module_config['dimensions']['node'] = server['hostname']
             _parse_and_post_metrics(resp_obj, REQUEST_TYPE_BUCKET_STAT,
                                     module_config)
 
 
 def _parse_and_post_metrics(resp_obj, request_type, module_config):
-    dimensions = module_config['dimensions']
-
-    # 1. Parse metrics
-    metrics = _parse_metrics(resp_obj, dimensions, request_type,
-                             module_config)
+    metrics = _parse_metrics(resp_obj, request_type, module_config)
 
     collectd.debug('Interval: ' + str(module_config['interval']))
-    # 2. Post metrics
     _post_metrics(metrics, module_config)
 
 
@@ -469,5 +403,6 @@ def setup_collectd():
     collectd.register_init(init)
     collectd.register_config(config)
     collectd.register_shutdown(shutdown)
+
 
 setup_collectd()

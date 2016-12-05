@@ -93,7 +93,6 @@ mock_config_nodes.children = [
     ConfigOption('Port', ('3000',)),
     ConfigOption('CollectMode', ('detailed',)),
     ConfigOption('Interval', ('10',)),
-    ConfigOption('FieldLength', ('1024',)),
     ConfigOption('ClusterName', ('SignalFxTestCouchbaseCluster',))
 ]
 
@@ -106,19 +105,6 @@ mock_config_bucket.children = [
     ConfigOption('CollectBucket', ('default',)),
     ConfigOption('CollectMode', ('detailed',)),
     ConfigOption('Interval', ('10',)),
-]
-
-mock_config_field_length = mock.Mock()
-mock_config_field_length.children = [
-    ConfigOption('CollectTarget', ('BUCKET',)),
-    ConfigOption('Host', ('localhost',)),
-    ConfigOption('Port', ('3000',)),
-    ConfigOption('Username', ('username',)),
-    ConfigOption('Password', ('password',)),
-    ConfigOption('CollectBucket', ('default',)),
-    ConfigOption('CollectMode', ('detailed',)),
-    ConfigOption('Interval', ('10',)),
-    ConfigOption('FieldLength', ('1024',)),
 ]
 
 
@@ -154,23 +140,6 @@ def test_config_bucket():
     assert module_config['collect_bucket'] == 'default'
     assert module_config['base_url'] == 'http://localhost:3000'
     assert module_config['cluster_name'] == 'SignalFxTestCouchbaseCluster'
-
-
-def test_config_field_length():
-    """
-    Check read params from config included bucket configuration
-    """
-
-    module_config = couchbase.config(mock_config_field_length, testing="yes")
-    assert module_config['plugin_config']['CollectTarget'] == 'BUCKET'
-    assert module_config['plugin_config']['Host'] == 'localhost'
-    assert module_config['plugin_config']['Port'] == '3000'
-    assert module_config['collect_mode'] == 'detailed'
-    assert module_config['interval'] == '10'
-    assert module_config['collect_bucket'] == 'default'
-    assert module_config['username'] == 'username'
-    assert module_config['password'] == 'password'
-    assert module_config['field_length'] == 1024
 
 
 def test_config_nodes_fail():
